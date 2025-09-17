@@ -1,0 +1,4 @@
+let $VIFM_CONTEXT = expand('%d')
+source $VIFM/navigation/vitepress.vifm
+
+nnoremap ;tt :goto $VIFM_CONTEXT/TODO.md<CR>
