@@ -4,8 +4,8 @@ import { imagetools } from 'vite-imagetools'
 
 // https://vitepress.dev/reference/site-config
 export default defineConfig({
-  title: "Notes",
-  description: "Notes",
+  title: "ejmastnak",
+  description: "Elijan Mastnak's portfolio page for professional work.",
   srcDir: "src",
   themeConfig: {
     nav: null,
