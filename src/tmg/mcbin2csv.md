@@ -2,11 +2,9 @@
 title: MCbin2csv
 ---
 
-# mcbin2csv
+# Reverse engineering the structure of binary sensor data
 
-This is a write-up of reversing engineering how to decode binary blobs of raw sensor data into human-readable floating point numbers.
-
-To make this concrete, I'm tasked with turning a binary data dump like this:
+In this project, I'm tasked with turning a binary data dump like this:
 
 ```txt
 # xxd data.bin -b -cols 8 | head -n 8
@@ -30,7 +28,9 @@ To make this concrete, I'm tasked with turning a binary data dump like this:
 # ...
 ```
 
-Original documentation or source code were unavailable, but the task is made straightforward by the availability of known decoded data matched to binary input data, which I can use as a source of truth to reverse engineer the decoding algorithm.
+This write-up walks you through my thought process and implementation.
+
+Original documentation or source code were unavailable, but the task is made relatively straightforward by the availability of known decoded data matched to binary input data, which I could use as a source of truth to reverse engineer the decoding algorithm.
 
 ## A bit of context
 
@@ -41,7 +41,7 @@ The logger produces binary data files, which are transferred from the logger to 
 A **separate Windows desktop program decodes the binary files** from the data logger into human-readable CSV files. The decoding program was created by a separate contractor in the 2010s.
 The program is currently suboptimal because of (primarily) the difficulty of transferring the program to new computers—license transfer, compatibility with modern Windows, etc. effectively ties the decoding program to a few old laptops—and (secondarily) a clunky GUI.
 
-**The goal** is to reimplement the decoding program in a more practicable form.
+**My goal** is to reimplement the decoding program in a more practicable form.
 Specific goals are to:
 
 - Reverse engineer the binary-to-CSV parsing algorithm
@@ -433,7 +433,11 @@ This also gives away the unit of the `TIMESTAMP` column: the log file tells us t
 
 ## Interpretting signedness
 
-Next question: should the binary values from each channel be interpretted as signed or unsigned (e.g. an `int16` or `uint16`; an `int32` or `uint32`)?
+Next question: how, if at all, should signedness be introduced to each channel? (We see in the source-of-truth CSV that some columns have negative values, so signedness must come into play somewhere.)
+Should any of the binary values coming out of the ADC be interpretted as signed data (e.g. an `int16` or `int32`)?
+Will scaling and level-shifting need to be performed post-hoc in software?
+
+We don't have original documentation, but common sense and access to the decoded source-of-truth `data.csv` will get us pretty far here.
 
 For review, channels are:
 
@@ -442,44 +446,36 @@ TIMESTAMP (timestamp)
 BATVOLT (battery voltage)
 SYSTEMP (sensor temperature)
 EXTRIG (trigger yes/no)
-INAN01 (analog input 1)
-INAN02
-INAN03
-INAN04
-ACC1X (accelerometer 1)
-ACC1Y
-ACC1Z
-GYR1X (gyroscope)
-GYR1Y
-GYR1Z
-GYR1T
-MAG1X (magnetometer)
-MAG1Y
-MAG1Z
-ACC2X (accelerometer 2)
-ACC2Y
-ACC2Z
+INAN0{1,2,3,4} (analog inputs)
+ACC1{X,Y,Z} (accelerometer 1)
+GYR1{X,Y,Z} (gyroscope)
+MAG1{X,Y,Z} (magnetometer)
+ACC2{X,Y,Z} (accelerometer 2)
 CHECKSUM 0 (checksum)
 ENDMARKER (constant end-of-line marker)
 ```
 
-We don't have original documentation, but common sense and hints from the decoded `data.csv` will get us pretty far here:
+::: details TLDR {open}
+It turns out that interpretting the values in the `INAN`, `ACC`, `GYR`, and `MAG` columns as signed integers (`int16`) and all other values as unsigned (`uint32` for `TIMESTAMP`; `uint16` for other channels) followed by simple multiplicative scaling produces values that agree out of the box with the source-of-truth CSV, without need for additional level shifting.
+:::
 
-- `TIMESTAMP`: in all likelihood unsigned.
-  Negative time makes little sense for a timestamp, and there is no reason the original designers would have wasted a bit on signed data.
-- `INAN0{1,2,3,4}` (analog inputs from strain gauges), `ACC1{X,Y,Z}`, and `ACC2{X,Y,Z}` all include negative values in the decoded `data.csv`, which implies the values should be interpretted as signed data.
-  (This agrees with common sense: the physical quantities being measured are vector quantities, and a sign bit is needed to encode direction along each axis.)
-  So these channels are all `int16`.
-- `GYR1{X,Y,Z,T}` (gyroscope data) and `MAG1{X,Y,Z}` (magnetometer data): not recorded in the particular `data.bin`/`data.csv` shown in this post, but values in other sample decoded CSV files show negative values, implying signed data.
-  (Again, this agrees with common sense—the quantities being measured—angular velocity and magnetic flux density—are vector quantities, and a sign bit is needed to encode direction along each axis.)
-  So these channels are also `int16`.
-- `BATVOLT`: inherently unipolar in practice, assuming `uint16`
-- `SYSTEMP`: inherently unipolar in practice, assuming `uint16`
-- `EXTRIG`: as far as I can tell from decoded CSV files, this channel is only ever 1 or 0 and represents a boolean on/off external trigger.
-  Unsigned is semantically appropriate for a boolean value, so assuming `uint16`.
-  (In practice—if the value is really only 0 or 1—you *could* get away with signed data, too. There is no risk of overflow assuming only 1/0 values.)
-- `CHECKSUM`: unsigned makes most sense for a checksum, since checksums are computed from raw binary representation of data and don't gain any practical or semantic value from being interpretted as signed. All that matters is the raw bit sequence.  Using `uint16`.
-- `ENDMARKER`: like for `CHECKSUM`, signedness is irrelevant. All that matters is that the same constant bit sequence appears at the end of every frame. Using `uint16`.
+The big picture: any value coming out of an ADC is fundamentally unsigned, in the sense that the ADC simply maps where an analog input signal falls on a monotonic scale from the ADC's low reference potential to its high reference potential.
+
+However, an analog sensor that produces fundamentally signed data (like an accelerometer or gyroscope, where resignedness encodes direction of the underlying vector quantity being measured) can be level-shifted with analog circuitry so that its zero output falls halfway between the ADCs reference values; I'll call this halfway point `V0`.
+In this case the sensor's zero value maps to `V0`, negative values below `V0`, and positive values above `V0`, and the ADC's output can be directly interpretted as two's complement signed integers. As far as I am aware, this setup is relatively common with analog accelerometers, gyroscopes, and magnetometers, and I believe this level-shifting of analog sensor outputs to mid-supply is what ended up happening in this case.
+
+My condensed though process for each channel.
+
+- `TIMESTAMP` (32-bit timestamp): almost surely unsigned, both by convention and common sense.
+  Negative time makes no sense in a timestamp, and there is no reason the original designers would have wasted a bit on signed data. Try `uint32` and compare to `data.csv`.
+- `INAN0{1,2,3,4}` (16-bit analog inputs from strain gauges): values in `data.csv` are signed, so signedness must be introduced somewhere. Try first interpreting as two's complement `int16` (perhaps a bipolar ADC is used to handle positie/negative swings the bridge's differential output, or level shifting is done with analog circuitry); if this doesn't produce values agreeing with `data.csv`, I'll have to look into level-shifting in software.
+- `ACC1{X,Y,Z}` and `ACC2{X,Y,Z}` (16-bit accelerometer inputs): presumably biased to mid-supply; try two's complement `int16` and compare to `data.csv`; reevaluate if needed.
+- `GYR1{X,Y,Z,T}` (16-bit gyroscope data): as for `ACC`—try `int16` and reevaluate if needed. 
+- `BATVOLT`: this will be an inherently unipolar signal in practice (unlike directional vector signals from e.g. an accelerometer), so assume `uint16` output and perform scaling as needed in software.
+- `SYSTEMP`: as for `BATVOLT`—assume `uint16` and scale as needed.
+- `EXTRIG`: as far as I can tell from decoded CSV files, this channel is only ever 1 or 0 and represents a boolean on/off external trigger, so use the more semantically appropriate `uint16` (even though in practice, if the value is really only 0 or 1, you *could* get away with signed data, too—there is no risk of overflow assuming only 1/0 values).
+- `CHECKSUM`: all that matters in a checksum is the raw bit sequence, so signedness is meaningless. Use `uint16`.
+- `ENDMARKER`: similarly, all that matters in an end marker is that the same constant bit sequence appears at the end of every frame. Signedness is meaningless—use `uint16`.
 
 **Sign encoding:** In the absence of information to the contrary, I'm assuming all signed channels use industry-standard two's complement encoding.
 
