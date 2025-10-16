@@ -4,6 +4,7 @@ import type { Theme } from 'vitepress'
 import DefaultTheme from 'vitepress/theme'
 import './style.css'
 import './tailwind.css'
+import '@tailwindplus/elements';
 
 export default {
   extends: DefaultTheme,
