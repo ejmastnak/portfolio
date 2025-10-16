@@ -13,5 +13,4 @@ const props = defineProps({
     />
     <p v-if="caption" class="-translate-y-2 text-gray-600 text-center">{{caption}}</p>
   </div>
-
 </template>
