@@ -10,7 +10,7 @@ It is used to analyze TMG time series.
 
 It can perform TMG parameter computation, rate of force development analysis of TMG measurements, and SPM-based analysis.
 
-It is used in [TMG Toolkit](tmgtoolkit.com)!
+It is used in [TMG Toolkit](https://tmgtoolkit.com)!
 
 It was used to perform the statical analyses in [this published article on SPM](#) (TODO)
 

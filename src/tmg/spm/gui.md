@@ -11,7 +11,7 @@ import resultsImg from './img/results.png'
 
 I made an interface for SPM analysis of TMG measurements.
 
-It is visible at [TMG Toolkit](tmgtoolkit.com)!
+It is visible at [TMG Toolkit](https://tmgtoolkit.com)!
 
 The basic point is to answer: "is this post-conditioning TMG measurement appreciably larger and faster than this pre-conditioning measurement (indicating potentiation), and if so, where in the time domain and two what extent does the difference occur?"
 
