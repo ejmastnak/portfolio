@@ -7,9 +7,9 @@ title: "Home"
 
   # Home
 
-  - [mcbin2csv](./tmg/mcbin2csv)
-  - [ChatTMG](./tmg/chattmg)
-  - [TMG Params](./tmg/param-computation)
+  - [ChatTMG](./tmg/chattmg/)
+  - [mcbin2csv](./tmg/mcbin2csv/)
+  - [TMG Params](./tmg/param-computation/)
   - [SPM GUI](./tmg/spm/gui)
 
 </div>

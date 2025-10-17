@@ -276,7 +276,7 @@ In any case, identifying `5a5a` as the last portion of each frame across many fr
 - The ENDMARKER column is a 16-bit integer (more on signedness below)
 - Each frame is 32 bytes long
 
-## How long is each channel?
+## How long is each channel? {how-long-is-each-channel}
 
 Next question: how many bytes does each channel take up?
 
@@ -432,7 +432,7 @@ They also give away the unit of the `TIMESTAMP` column: the log file tells us th
 
 - The `TIMESTAMP` channel has units of microseconds
 - The `TIMESTAMP` channel is 32 bits wide
-- All remaining channels must be 16 bits wide (see [How long is each channel?](how-long-is-each-channel))
+- All remaining channels must be 16 bits wide (see [How long is each channel?](./#how-long-is-each-channel))
 
 ## Interpreting signedness
 
