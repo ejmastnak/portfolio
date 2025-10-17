@@ -6,7 +6,6 @@ title: ChatTMG
  import Image from '@/Components/Image.vue'
 
  import interfaceHomeImg from './img/interface/home.png'
-
  import dataAbout1Img from './img/training-data/about-1.png'
  import dataAbout2Img from './img/training-data/about-2.png'
  import dataClientsImg from './img/training-data/clients.png'
@@ -22,7 +21,7 @@ This is a technical walkthrough of building an on-brand LLM-based chatbot that a
 
 <Image :src="interfaceHomeImg" caption="The chatbot's interface, modelled after the familiar ChatGPT interface visitors are used to, but with custom branding." />
 
-The article is meant as a technical guide for a specific audience: other people interested in building a custom chatbot who are familiar with the general Laravel/Vue/Inertia stack, but unfamiliar with setting up the infrastructure for a chatbot.
+The article is meant as a technical guide for other people interested in building a custom chatbot who are familiar with the general Laravel/Vue/Inertia stack, but unfamiliar with setting up the infrastructure for a chatbot.
 Throughout the write-up, I assume you're familiar with general Laravel/Vue/Inertia concepts (or willing to learn as you go); the write-up focuses on the chatbot-specific parts.
 
 ## Technical overview
@@ -42,7 +41,7 @@ The chatbot is essentially a customer conversion tool meant to facilitate the in
 
 This project used [OpenAI's Responses API](https://platform.openai.com/docs/api-reference/responses) with file search to power the chatbot.
 
-At the time of writing, this was the de-facto tool for building chatbots with an external LLM provider, and we decided using OpenAI's API with built-in file search was most efficient and cost-effective for our relatively straightforward use case.
+At the time of writing, the Responses API was the de facto tool for building chatbots with an external LLM provider, and we decided using OpenAI's built-in file search tool was most efficient and cost-effective for our relatively straightforward use case.
 
 There are of course other LLM providers, and one could even self-host a custom RAG and LLM pipeline, but that falls beyond the scope of this article, and probably also beyond the needs of a typical reader of this guide.
 
@@ -70,14 +69,13 @@ Where possible, material was **consolidated into plain-text Markdown files** fro
 
 This material is then ready for chunking and embedding, for later use with RAG.
 
-::: details Plain text is not crucial {open}
-I consolidated materials into Markdown in this project, but doing so is not crucial—OpenAI can ingest Word, PDF, and many other files when preparing a vector store.
+::: info On using plain text training data
+I consolidated materials into Markdown in this project, but doing so is not crucial—OpenAI and other LLM providers can ingest Word, PDF, and many other files when preparing a vector store.
 
 But consolidated, hand-curated plain text (when feasible) certainly gives you more control over what information OpenAI will ingest (and thus better answers), generally cuts down on file size (and thus hosting costs) and also makes it easier to perform manual chunking should we choose to migrate to a custom embedding pipeline in the future.
 :::
 
-
-## Embedding and RAG
+## Embedding and RAG {#rag}
 
 This project used OpenAI's out-of-the-box [vector store](https://platform.openai.com/docs/api-reference/vector-stores) and [file](https://platform.openai.com/docs/api-reference/files) features to handle embedding and RAG.
 This was most efficient and cost-effective for this relatively simple case, where the knowledge base consisted of hundreds of pages from some 30-40 documents.
@@ -145,7 +143,7 @@ Comments:
 - The `openai-php/laravel` package automatically picks up your API key and organization ID from `OPENAI_API_KEY` and `OPENAI_ORGANIZATION` and uses them to authenticate with OpenAI's APIs.
 - We will use the vector store ID to attach the vector store to response generation.
 
-### OpenAI-related config values
+### OpenAI-related config values {#config}
 
 Running `php artisan openai:install` (when you installed `openai-php/laravel`) creates a config file at `config/openai.php` for OpenAI-related information.
 Open this config file and add a few more custom values to register your desired model, chatbot instructions, and vector store id:
@@ -172,7 +170,7 @@ Open this config file and add a few more custom values to register your desired 
 Obviously the models will change (and improve) with time; we used `gpt-4o-mini` at the time of writing with good results.
 You should be above to find an up-to-date list with pricing information [in the OpenAI pricing docs](https://platform.openai.com/docs/pricing).
 
-## Design choice: chats scoped to one page lifecycle
+## Design choice: chats are scoped to one page lifecycle {#design-choice}
 
 By design, in this project I have scoped chats to one client-side page lifecycle.
 Conversations are restarted on a page refresh, similar to ChatGPT's web interface if you are not logged in.
@@ -184,16 +182,16 @@ The app maintains conversation history over the course of a given chat to provid
 This design works well because the chatbot is meant for one-off queries.
 Avoiding long-term server-side storage simplifies backend complexity (persisted conversations would require user accounts and dedicated database tables) and avoids the regulatory complications that come with storing user information serverside in the EU.
 
-## JSON format for representing conversation
+## JSON format for representing conversations
 
-We represent conversations as an array of Javascript objects with `role` and `content` keys; `role` indicates who is speaking (chatbot or user) and `content` stores the message's text content.
+The app represents conversations as arrays of JavaScript objects with `role` and `content` keys; `role` indicates who is speaking (chatbot or user) and `content` stores the message's text content.
 
-This conversation format matches OpenAI's conversation format, and is intentionally chosen to allow direct plug-and-play with OpenAI's Responses API.
+This conversation format intentionally matches OpenAI's conversation format and allows direct plug-and-play with OpenAI's Responses API.
 
-Here is an example [from the OpenAI docs](https://platform.openai.com/docs/guides/conversation-state?api-mode=responses#manually-manage-conversation-state):
+Here is an example [from the OpenAI docs](https://platform.openai.com/docs/guides/conversation-state?api-mode=responses#manually-manage-conversation-state) of the conversation format:
 
 ```javascript
-// Example conversation
+// Example conversation: an array of objects with `role` and `content` keys
 let conversation = [
   { role: "user", content: "knock knock." },
   { role: "assistant", content: "Who's there?" },
@@ -209,15 +207,26 @@ let conversation = [
 */
 ```
 
+## Conversation IDs and cached conversations {#cache}
 
-The backend would store the conversation in a PHP array in a cache entry that looks something like this:
+Both the backend and frontend store conversations in short-term memory.
+
+The frontend, obviously, needs to display the full converstion to the user, while the backend stores the full conversation history in memory to provide context for future answers based on the conversation so far.
+Keeping the conversation in serverside memory avoids having the frontend send the full conversation history over the network with every new prompt (and the associated parsing and validation involved).
+
+A given conversation is kept in sync between backend and frontend using a unique **conversation ID**.
+The backend stores conversation history using a cache entry keyed by conversation ID, the frontend sends the conversation id with every prompt, and the backend uses the conversation id to match the prompt to an existing conversation.
+
+A UUID looks something like this: `"d933cabd-6af7-4f62-b04c-11c5f8e0b523"`
+
+A backend cache entry holding a conversation might look like this...
 
 ```php
 <?php
 [
-  // Backend stores conversations in the Laravel cache, keyed by
-  // conversation ID (discussed below)
-  "d933cabd-6af7-4f62-b04c-11c5f8e0b523" => [
+  // Backend stores conversations as PHP arrays in the
+  // Laravel cache, keyed by // conversation ID 
+  "conversation:d933cabd-6af7-4f62-b04c-11c5f8e0b523" => [
     [
       "role" => "user",
       "content" => "knock knock."
@@ -234,19 +243,27 @@ The backend would store the conversation in a PHP array in a cache entry that lo
 ]
 ```
 
-## Session registration and conversation IDs
+...while the backend can interact with cached conversations as follows:
 
-Recall that both the backend and frontend store conversation in short-term memory.
+```php
+<?php
+use Illuminate\Support\Facades\Cache;
 
-The backend needs the full conversation history to provide context for future answers based on the conversation so far;
-keeping the conversation in serverside memory avoids having the frontend send the full conversation history over the network with every new prompt (and the associated parsing and validation involved).
+// Get a conversation from cache
+$conversation = Cache::get("conversation:{$conversationId}");
 
-A given conversation is kept in sync between backend and frontend using a unique **conversation ID**.
-The backend stores conversation history using a cache entry keyed by conversation ID, the frontend sends the conversation id with every prompt, and the backend uses the conversation id to match the prompt to an existing conversation.
+// Does a given conversation exist in the cache?
+$exists = Cache::has("conversation:{$conversationId}");
 
-A UUID looks something like this: `"d933cabd-6af7-4f62-b04c-11c5f8e0b523"`
+// Place a conversation in cache, keyed by conversation id
+Cache::put("conversation:{$conversationId}", $conversation, now()->addMinutes(30));
+```
 
-To manage session registration, we first create **a POST route** that the frontend uses to create a new conversation.
+See the [Laravel Cache docs](https://laravel.com/docs/cache) for more on Cache usage.
+
+## Registering new conversations {#registering-conversations}
+
+To manage creating and registering new conversations, we first create **a POST route** that the frontend uses to create a new conversation.
 
 ```php
 <?php
@@ -255,7 +272,7 @@ To manage session registration, we first create **a POST route** that the fronte
 Route::post('/chat/register', [OpenAiController::class, 'register'])->name('chat.register');
 ```
 
-The corresponding **controller method** is:
+The corresponding **controller method** to register new conversations looks like this:
 
 ```php
 <?php
@@ -291,7 +308,7 @@ The **relevant frontend code** looks something like this:
 ```vue
 <!-- In the Vue component with the Chatbot interface, e.g. resources/js/Pages/ChatbotInterface.vue -->
 <script setup>
-import { ref, onMounted, } from 'vue'
+import { ref, onMounted } from 'vue'
 
 const conversationId = ref(null)
 function registerConversation() {
@@ -311,7 +328,7 @@ onMounted(() => {
 </script>
 ```
 
-## Sending prompts from frontend to backend
+## Request format and validating prompts {#validation}
 
 The frontend sends conversation prompts to the backend in the following format:
 
@@ -323,18 +340,16 @@ The frontend sends conversation prompts to the backend in the following format:
 ```
 
 The `prompt` key stores the user's most recent prompt; `conversation_id` identifies the conversation to the backend and lets the backend look up conversation history to provide context for its answer.
+I'll describe the mechanism of sending the request using the Fetch API in more detail later.
 
-I'll describe the mechanism of sending the request using the Fetch API below (**TODO:** link); for now I'm just showing the format in the context of discussing validation.
-
-## Validating prompts
-
-The backend validates form data send from the frontend using a custom [Form Request](https://laravel.com/docs/validation#form-request-validation) called ChatRequest:
+The backend validates form data send from the frontend using a custom [Form Request](https://laravel.com/docs/validation#form-request-validation) I have called StreamRequest (because the chatbot's responses are *streamed*—more on this later):
 
 ```bash
-php artisan make:request ChatRequest
+# Form request to handle new streamed chatbot responses
+php artisan make:request StreamRequest
 ```
 
-The ChatRequest sees input data like this...
+The StreamRequest sees input data like this...
 
 ```php
 <?php
@@ -349,8 +364,8 @@ The ChatRequest sees input data like this...
 ```php
 <?php
 
-// app/Http/Requests/ChatRequest.php
-class ChatRequest extends FormRequest
+// app/Http/Requests/StreamRequest.php
+class StreamRequest extends FormRequest
 {
   public function rules(): array
   {
@@ -378,9 +393,9 @@ class ChatRequest extends FormRequest
 }
 ```
 
-## Routes
+## Backend routes
 
-I use three routes for the
+I use three routes for the chatbot:
 
 - `/chat`: a GET route that returns an Inertia-rendered Vue page `resources/js/Pages/Chat.vue` with the chatbot interface:
 
@@ -404,11 +419,11 @@ I use three routes for the
   Route::post('/chat/stream', [OpenAiController::class, 'stream'])->name('chat.stream');
   ```
 
-- `/chat/register`: the POST route discussed above **TODO:** link in the context of session registration.
+- `/chat/register`: the POST route discussed [earlier](#registering-conversations) in the context of conversation registration.
 
-## Calling the OpenAI Responses API
+## Calling the OpenAI Responses API {#openai-calls}
 
-Here is proof-of-concept code for calling the OpenAI Responses API to generate a response from a given prompt, based on the conversation history so far and using a vector store for file search/RAG:
+Here is minimal working code for calling the OpenAI Responses API from a Laravel backend to generate a response from a given prompt, based on the conversation history so far and using a vector store for file search/RAG:
 
 ```php
 <?php
@@ -417,7 +432,7 @@ use OpenAI\Laravel\Facades\OpenAI;
 # Choose a model
 $model = "gpt-4o-mini";
 
-# Conversation history so far, to provide context for new responses
+# Conversation history so far, to provide context for the upcoming response
 $conversation = [
   [ 'role': "user", 'content': "knock knock." ],
   [ 'role': "assistant", 'content': "Who's there?" ],
@@ -427,8 +442,8 @@ $conversation = [
 # Instructions passed to LLM
 $instructions = "You are a friendly chatbot who plays along with users' jokes.";
 
-# ID of vector store to use for RAG
-$vectorStoreId = "vs_123456789123456789123456";
+# ID of vector store to use for RAG, e.g. "vs_123456789123456789123456"
+$vectorStoreId = config('openai.app.vector_store_id');
 
 $response = $client->responses()->create([
   'model' => $model,
@@ -443,20 +458,23 @@ $response = $client->responses()->create([
 echo $response->outputText;
 ```
 
+::: info
+In practice, you would want to store model, instructions, vector store id, etc. in config values (as discussed [earlier](#config) in the context of backend setup) and then access them with e.g. `$vectorStoreId = config('openai.app.vector_store_id');` rather than hardcoding them in the controller.
+:::
+
 The full output text is available at `$response->outputText`; for details see the [openai-php/client docs](https://github.com/openai-php/client?tab=readme-ov-file#responses-resource).
 
 
-::: warning
+::: info The `$client->responses()->create()` call blocks execution
 The call to `$client->responses()->create()` blocks until OpenAI generates the entire response—a chatbot end user would have to wait until the full response is generated before any text appears.
 
-Streamed responses (described below) solve this problem and provide a better experience in a production chatbot.
+In a production chatbot you'd probably want to use streamed responses (described below) instead.
 :::
 
 ### Streamed responses
 
-This project uses streamed responses so that the chatbot's answers appear on screen as they are being generated.
+Below is proof of concept code for calling the OpenAI Responses API to generate a *streamed* response (using the same parameters as above for non-streamed responses), in which case the backend can begin forwarding the response to the frontend as soon as the first piece of text appears, and continue sending the response as it is generated.
 
-Below is proof of concept code for calling the OpenAI Responses API to generate a *streamed* response (using the same parameters as above for non-streamed responses).
 You first create a stream using `createStreamed()`, then consume the stream event by event, handling each event based on its type.
 
 ```php
@@ -474,6 +492,7 @@ $stream = OpenAI::responses()->createStreamed([
 
 // You can then immediately begin consuming the stream.
 foreach ($stream as $event) {
+  // Handle events based on event type (e.g. response.output_text.delta)
   if ($event->event === 'response.output_text.delta') {  // new text received
     $chunk = $event->response->delta;
     echo $chunk;
@@ -489,12 +508,11 @@ foreach ($stream as $event) {
 
 In practice, at least for simple use cases, you'll be most interested in the `response.output_text.delta` event; this event contains new chunks of output text sent by OpenAI; you string together these text deltas to create the full chatbot response.
 
-Off course, there are *many* more events than I've shown in the simple proof-of-concept snippet above.
-See the [OpenAI docs](https://platform.openai.com/docs/api-reference/responses-streaming) for a full list of events and their payloads.
+See the [OpenAI docs](https://platform.openai.com/docs/api-reference/responses-streaming) for a full list of events and their payloads (there are *many* more events than I've shown in the simple minimal working example above).
 
-## Sending streamed response from controller to frontend
+## Sending streamed responses from controller to frontend {#sending-stream}
 
-In the production app, the controller sends the streamed response to the frontend using the Fetch API, and sends data in JSON objects with a `type` key to specify a message type and a `content` key with the message payload.
+In the production app, the controller sends the streamed response to the frontend as a stream of stringified JSON objects with a `type` key to specify a message type and a `content` key with the message payload.
 
 A typical message the backend would send to the frontend looks like this:
 
@@ -514,17 +532,17 @@ $stream = OpenAI::responses()->createStreamed([/* ... */]);
 
 foreach ($stream as $event) {
   // Handle each event, create a corresponding JSON message, forward message to frontend
-  if ($event->event === 'response.output_text.delta') {  // new text received
+  if ($event->event === 'response.output_text.delta') {
     $chunk = $event->response->delta;
     echo json_encode(['type' => 'data', 'content' => $chunk]) . "\n";
     ob_flush();
     flush();
-  } else if ($event->event === 'error') {  // error
+  } else if ($event->event === 'error') {
     echo json_encode(['type' => 'error', 'content' => 'Streaming error']) . "\n";
     ob_flush();
     flush();
     return;
-  } else if ($event->event === 'response.completed') {  // response complete
+  } else if ($event->event === 'response.completed') {
     return;
   }
 }
@@ -534,37 +552,38 @@ The `echo`, `ob_flush()`, and `flush()` calls are a standard PHP pattern for sen
 
 Note that each message is stringified in the backend using `json_encode` and that messages are delimited by new line characters (this is a standard pattern for sending structured JSON data one record at a time; see [JSON Lines](https://jsonlines.org/));
 the frontend can then extract messages by splitting the streamed response on new line characters and use `JSON.parse()`.
-
 (The newline-based delimiting works because any newline characters in actual message payloads will be escaped to `\\n` by `json_encode`, so `\n` is guaranteed to uniquely delimit messages.)
 
-## Edge case: handling expired conversations
+## Edge case: handling expired conversations {#expired-conversations}
 
-Conversations are cached serverside in short-term memory; what happens when the cache entry expires?
+Conversations are cached serverside in short-term memory ([as discussed earlier](#cache)); I describe here how I handle the edge case when cache entries expire.
 
-A concrete scenario: a user starts a conversation, leaves the browser tab with the conversation open, and returns after a few hours.
-The browser will still have the conversation in memory, but the backend cache entry holding the conversation on the server will have expired; the browser should start a new chat and resync with the backend.
+Here is a concrete scenario: a user starts a conversation, leaves the browser tab with the conversation open, and comes back to their computer after a few hours.
+The browser will still have the conversation in memory, but the backend cache entry holding the conversation on the server will have expired.
+In this case the clientside conversation is stale, and the browser must start a new chat to resync with the backend.
+(This is unlikely to happen in practice since the chatbot is usually used for one-off queries and closed; rarely would anyone start a conversation and come back to it later.)
 
-Two notes:
-
-- A similar workflow happens with ChatGPT's "temporary chat" feature, where (at the time of writing) chats expire after 24 hours.
-- This is unlikely to happen in practice since the chatbot is usually used for one-off queries and closed; rarely would anyone start a conversation and come back to it later.
+::: info
+A similar pattern happens with ChatGPT's "temporary chat" feature, where (at the time of writing) chats expire after 24 hours.
+:::
 
 In this case it is good UX to at least inform the user what is going on—their chat has expired and a new one will begin.
-Here is supporting backend code:
+
+Here is backend code to detect stale conversations and notify the frontend:
 
 ```php
 <?php
 
 class OpenAiController extends Controller
 {
-  public function stream(ChatRequest $request)
+  public function stream(StreamRequest $request)
   {
     // Extract user's prompt and conversation ID from validated request
     $validated = $request->validated();
     $conversationId = $validated['conversation_id'];
     $prompt = $validated['prompt'];
 
-    // Load conversation history from cache
+    // Load conversation history from cache—`$conversation` will be `null` when expired
     $conversation = Cache::get("conversation:{$conversationId}");
 
     // Handle expired (null) conversations
@@ -586,23 +605,23 @@ class OpenAiController extends Controller
 }
 ```
 
-## Controller
+The code relies on Laravel's cache returning `null` when an entry has expired; we can then check for `is_null($conversation)` and send a simple error message to the frontend if so.
 
-Putting together the pieces so far (cache entries; session registration; validating prompts; Calling the OpenAI Responses API; Sending streamed response from controller to frontend; handling expired chats) gives the main controller stream function that handles requests for chatbot responses:
+## Full controller
 
-**TODO:** links to subheadings
+Putting together the pieces so far ([cache entries](#cache); [conversation registration](#registering-conversations); [validating prompts](#validation); [calling the OpenAI Responses API](#openai-calls); [sending streamed response from controller to frontend](#sending-stream); and [handling expired chats](#expired-conversations)) produces the controller function, shown below, that handles requests for streamed chatbot responses:
 
 ```php
 <?php
 
-use App\Http\Requests\ChatRequest;
+use App\Http\Requests\StreamRequest;
 use Illuminate\Support\Facades\Cache;
 use OpenAI\Laravel\Facades\OpenAI;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class OpenAiController extends Controller
 {
-  public function stream(ChatRequest $request)
+  public function stream(StreamRequest $request)
   {
     // Extract user's prompt and conversation ID from validated request
     $validated = $request->validated();
@@ -679,19 +698,19 @@ class OpenAiController extends Controller
 }
 ```
 
-## Sending requests: CSRF token
+## Forming requests on the frontend: CSRF tokens, validation
 
 The frontend sends requests for chatbot responses to the backend's `chat.stream` route using the Fetch API.
-Actual production code looks like this:
+The code looks like this:
 
 ```javascript
 import { ref } from 'vue'
 
-// `usePage` and `page` are used to access CSRF
+// `usePage` and `page` are used to access CSRF tokens
 import { usePage } from '@inertiajs/vue3'
 const page = usePage()
 
-// Conversation ID is set during session registration
+// A conversation ID is requested and created when the component mounts
 const conversationId = ref(null)
 
 // The user's prompt
@@ -713,19 +732,17 @@ const response = await fetch(route('chat.stream'), {
 
 Notes:
 
-- CSRF validation must be handled manually (discussed below)
-- `"Accept": "application/json"` is needed to receive validation errors (discussed below)
-- The request body contains `conversation_id` and `prompt` fields, which are picked up and validated by the ChatRequest form request **TODO:** link above
+- CSRF validation must be handled manually (discussed below).
+- `"Accept": "application/json"` is needed to receive validation errors (discussed below).
+- The request body contains `conversation_id` and `prompt` fields, which are picked up and validated by the StreamRequest form request [discussed earlier](#validation).
 
 ### CSRF
 
-The `X-CSRF-TOKEN` header must be passed manually to satisfy Laravel's built-in CSRF validation. **TODO:** preciseness of phrasing
+A CSRF token must be passed manually in the `X-CSRF-TOKEN` header to satisfy Laravel's built-in CSRF protection.
 (Inertia and Axios, which are commonly used with the Laravel + Vue stack, usually pass a CSRF token under the hood, but we must do this manually when sending requests with the comparatively low-level Fetch API.)
 
-To make the CSRF token available in the frontend, I include it Inertia's `page.props.auth` object, which is shared with all frontned pages.
-I do this in `app/Http/Middleware/HandleInertiaRequests.php`; Laravel's `csrf_token()` helper is globally available.
-
-**TODO:** link to Inertia docs.
+I make the CSRF token available in the frontend by including it in the `page.props.auth` object shared by Inertia with every frontend page (see the [Inertia docs on shared data](https://inertiajs.com/shared-data)).
+I add the CSRF token to `page.props.auth` by editing `app/Http/Middleware/HandleInertiaRequests.php` as follows:
 
 ```php
 <?php
@@ -736,7 +753,7 @@ public function share(Request $request): array
         ...parent::share($request),
         'auth' => [
             'user' => $request->user(),
-            'csrf' => csrf_token(),
+            'csrf' => csrf_token(), // Laravel's `csrf_token()` helper is globally available  // [!code highlight]
         ],
     ];
 }
@@ -744,7 +761,7 @@ public function share(Request $request): array
 
 ### Validation
 
-**TLDR:** passing the `"Accept": "application/json"` ensures Laravel returns validation errors as JSON with a 422 response code, which our frontend can then handle.
+**TLDR:** passing the `"Accept": "application/json"` ensures Laravel returns validation errors as JSON with a 422 response code, which the frontend can easily handle.
 
 In more detail: Laravel has two ways of returning validation errors when using Form Request validation.
 By default, Laravel's `FormRequest` assumes a *web form* submission, and when validation fails, Laravel issues a 302 redirect back to the previous page, flashes errors to the session, and expects the browser to render them via Blade or Inertia.
@@ -760,11 +777,17 @@ Meanwhile, if a request declares `"Accept": "application/json"`, then Laravel re
 }
 ```
 
-Our frontend specifies `"Accept": "application/json"` with the `fetch` request, since handling JSON responses is more ergonomic than handling flashed data when using the fetch API.
+The frontend specifies `"Accept": "application/json"` with the `fetch` request, since handling JSON responses is more ergonomic than handling flashed data when using the fetch API.
 
 Actual code for catching and handling validation errors might look something like this:
 
-```javascript
+```vue
+<script setup>
+import { ref } from 'vue'
+
+// Store validation errors in a reactive variable
+const validationErrors = ref(null)
+
 const response = await fetch(route('chat.stream'), {/* ... */});
 
 if (!response.ok) {
@@ -779,6 +802,15 @@ if (!response.ok) {
 if (!response.body) {
   throw new Error("Error generating response");
 }
+</script>
+
+<template>
+  <!-- Errors display in frontend whenever validationErrors is populated -->
+  <div class="text-red-700" v-if="validationErrors">
+    <ul><li v-for="error in validationErrors.prompt">{{error}}</li></ul>
+    <ul><li v-for="error in validationErrors.conversation_id">{{error}}</li></ul>
+  </div>
+</template>
 ```
 
 ## Consuming stream in frontend
@@ -805,7 +837,7 @@ let buffer = "";
 // Process streamed response chunk by chunk
 while (true) {
   const { value, done } = await reader.read();
-  if (done) break;  // `reader` detects end of response TODO with EOF
+  if (done) break;  // `reader` signals `done` when stream is fully consumed
 
   // Append decoded text to buffer and extract newline-delimited messages
   buffer += decoder.decode(value, { stream: true });
@@ -820,7 +852,7 @@ while (true) {
     if (msg.type === "data") {
       console.log(msg.content);  // new streamed text here
     } else if (msg.type === "error") {
-      // **TODO:** link to handling expired chats in backend
+      // If backend indicates chat has expired
       if (msg.message?.includes("Session expired")) {  // handle expired chats
         setInfoMessage("Session expired. Starting a new chat.");
         newChat();
@@ -832,16 +864,15 @@ while (true) {
 }
 ```
 
-The general structure follows a standard JS pattern for reading a streamed response fetched with the Fetch API; at the time of writing, you can see an example [on MDN's ReadableStream page](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream#fetch_stream).
+The general structure follows a standard JavaScript pattern for reading a streamed response fetched with the Fetch API; at the time of writing, you can see an example [on MDN's ReadableStream page](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream#fetch_stream).
 
 A comment on the highlighted `buffer = lines.pop();` line, which is perhaps confusing:
 
-- Response sent from backend to frontend is a stream of new-line delimited stringified JSON objects with a `type` and `data` key.
-  **TODO:** link to section
-  This stream is received in chunks by the frontend and accumulated in a buffer.
-- `const lines = buffer.split("\n");` splits the buffer's contents into individual messages sent by backend
-- In general, the buffer will not end at a clean message boundary (i.e. the final character in `buffer` will not be the message terminator `"\n"`) and the final entry in `lines` will be only the first part of a message
-- `buffer = lines.pop();` resets the buffer and places the incomplete beginning of the final entry in lines at the start of the buffer for the next loop iteration, where it will be completed by the start of the next chunk received by the frontend.
+- Recall that the chatbot's response is sent from backend to frontend is a stream of new-line delimited stringified JSON objects with a `type` and `data` key ([discussed earlier](#sending-stream)).
+- The streamed response is received in chunks by the frontend and accumulated in a buffer.
+  `const lines = buffer.split("\n");` splits the buffer's contents into individual messages sent by backend; this works because messages are delimited by newline characters.
+- In general, the buffer will not end at a clean message boundary (i.e. the final character in `buffer` will not be the message terminator `"\n"`) and the final entry in `lines` will be only the first part of a message.
+  Using `buffer = lines.pop();` resets the buffer and places a potentially incomplete beginning of the final entry in `lines` at the start of the buffer for the next loop iteration, where it will be completed by the start of the next chunk received by the frontend.
   (The case where `buffer` *does* cleanly end at a message boundary, in which case the final entry in `lines` is an empty string, is handled by `if (!line.trim()) continue;`.)
 
 ## Displaying content
@@ -849,8 +880,10 @@ A comment on the highlighted `buffer = lines.pop();` line, which is perhaps conf
 As the frontend consumes the backend's streamed response, it appends each streamed chunk's content to a reactive Vue variable `const conversation = ref([])` holding the conversation.
 
 Vue updates the DOM as the `conversation` variable updates.
+Here is an example with a minimal template to display `conversation`:
 
-```javascript
+```vue
+<script setup>
 import { ref, nextTick } from 'vue'
 
 // Conversation contains objects of the form
@@ -888,8 +921,8 @@ while (true) {
     const msg = JSON.parse(line);
     if (msg.type === "data") {
       // Append each new chunk of streamed response to chatbot's answer
-      conversation.value[conversation.value.length - 1].content += msg.content;    // [!code highlight]
-      await nextTick();
+      conversation.value[conversation.value.length - 1].content += msg.content;  // [!code highlight]
+      await nextTick();  // [!code highlight]
     } else if (msg.type === "error") {
       if (msg.message?.includes("Session expired")) {  // handle expired chats
         setInfoMessage("Session expired. Starting a new chat.");
@@ -900,16 +933,24 @@ while (true) {
     }
   }
 }
+</script>
+
+<template>
+  <!-- Proof of concept for displaying live-updating streamed conversation. -->
+  <pre>
+    {{conversation}}
+  </pre>
+</template>
 ```
+
+The relevant code is the highlighted line `conversation.value[conversation.value.length - 1].content += msg.content;`.
+This simply appends each new chunk in the most recent entry in `conversation`; because `conversation` is reactive, any elements in the template displaying `conversation` will update automatically; `nextTick()` simply waits for DOM updates to flush when `conversation` is updated.
 
 ## Careful with Markdown responses
 
-OpenAI's Responses API responds with Markdown (not plain text).
-Markdown is good—it provides structure and formatting—but must be handled carefully.
+OpenAI's Responses API responds with Markdown (not plain text), which requires some care in handling.
 
-An example response from OpenAI looks like this:
-
-**TODO:** can you wrap the code block onto multiple lines?
+An example response from OpenAI looks like this (note the Markdown syntax in the chatbot's response):
 
 ```json
 [
@@ -919,7 +960,50 @@ An example response from OpenAI looks like this:
   },
   {
     "role": "assistant",
-    "content": "TMG (Tensiomyography) is a powerful tool that can significantly aid in monitoring injuries and facilitating a safe return to play for athletes. Here are some ways TMG can be beneficial in this context:\n\n### 1. **Objective Measurement of Muscle Recovery**\nTMG provides objective data regarding the contractile properties of muscles. By measuring metrics such as contraction time, relaxation time, and maximal displacement, practitioners can assess muscle function status. This is particularly useful during recovery from injuries, allowing for precise monitoring of healing progress.\n\n### 2. **Comparative Analysis of Injured vs. Healthy Muscles**\nIn a case study, TMG measurements revealed significant differences between the injured and healthy muscles of an athlete. For example, the time required for the injured muscle to contract was notably longer compared to the healthy muscle. Such insights facilitate informed decisions about the timing of returning to full training and competition.\n\n### 3. **Monitoring Asymmetry**\nTMG helps identify asymmetries in muscle function, which can indicate underlying issues that may lead to re-injury. Continuous assessments can be scheduled during recovery phases to ensure muscle symmetry is restored before returning to play. \n\n### 4. **Guiding Rehabilitation Programs**\nTMG's real-time feedback can optimize rehabilitation programs. By evaluating muscle function at different stages of recovery, rehabilitation specialists can tailor interventions to ensure that athletes are not returning too soon, thus minimizing the risk of re-injury.\n\n### 5. **Integration with Performance Monitoring**\nTMG data can be integrated with other performance metrics to provide a comprehensive view of an athlete's readiness for play. This holistic approach allows sports professionals to create safer and more effective return-to-play strategies.\n\n### Conclusion\nUtilizing TMG in injury monitoring offers a blend of scientific precision and practical application in the sports setting, making it an invaluable asset for coaches, physiotherapists, and sports professionals aiming to reduce the risk of re-injury during an athlete's return to play."  // [!code highlight]
+    "content": "TMG (Tensiomyography) is a powerful tool
+    that can significantly aid in monitoring injuries
+    and facilitating a safe return to play for athletes.
+    Here are some ways TMG can be beneficial in this
+    context:\n\n### 1. **Objective Measurement of Muscle
+    Recovery**\nTMG provides objective data regarding
+    the contractile properties of muscles. By measuring
+    metrics such as contraction time, relaxation time,
+    and maximal displacement, practitioners can assess
+    muscle function status. This is particularly useful
+    during recovery from injuries, allowing for precise
+    monitoring of healing progress.\n\n### 2.
+    **Comparative Analysis of Injured vs. Healthy
+    Muscles**\nIn a case study, TMG measurements
+    revealed significant differences between the injured
+    and healthy muscles of an athlete. For example, the
+    time required for the injured muscle to contract was
+    notably longer compared to the healthy muscle. Such
+    insights facilitate informed decisions about the
+    timing of returning to full training and
+    competition.\n\n### 3. **Monitoring Asymmetry**\nTMG
+    helps identify asymmetries in muscle function, which
+    can indicate underlying issues that may lead to
+    re-injury. Continuous assessments can be scheduled
+    during recovery phases to ensure muscle symmetry is
+    restored before returning to play. \n\n### 4.
+    **Guiding Rehabilitation Programs**\nTMG's real-time
+    feedback can optimize rehabilitation programs. By
+    evaluating muscle function at different stages of
+    recovery, rehabilitation specialists can tailor
+    interventions to ensure that athletes are not
+    returning too soon, thus minimizing the risk of
+    re-injury.\n\n### 5. **Integration with Performance
+    Monitoring**\nTMG data can be integrated with other
+    performance metrics to provide a comprehensive view
+    of an athlete's readiness for play. This holistic
+    approach allows sports professionals to create safer
+    and more effective return-to-play strategies.\n\n###
+    Conclusion\nUtilizing TMG in injury monitoring
+    offers a blend of scientific precision and practical
+    application in the sports setting, making it an
+    invaluable asset for coaches, physiotherapists, and
+    sports professionals aiming to reduce the risk of
+    re-injury during an athlete's return to play."
   }
 ]
 ```
@@ -930,11 +1014,9 @@ Considerations related to Markdown include:
 - The Markdown-derived HTML needs to be sanitized, since it comes from a third-party source.
 - You'll probably want to style the HTML, too—raw HTML looks ugly and likely won't match your site's styling.
 
-I use `marked` for Markdown to HTML conversion, `DOMPurify` for HTML sanitization, and Tailwind Typography to style the HTML.
+I use [`marked`](https://github.com/markedjs/marked) for Markdown to HTML conversion, [`DOMPurify`](https://github.com/cure53/DOMPurify) for HTML sanitization, and [Tailwind Typography](https://github.com/tailwindlabs/tailwindcss-typography) to style the HTML.
 
-**TODO:** links to marked, DOMPurify, etc. pages.
-
-The mechanics of the OpenAI Markdown response -> raw HTML -> sanitized, styled HTML look something like this:
+The mechanics of the Markdown response -> raw HTML -> sanitized, styled HTML pipeline look something like this:
 
 ```vue
 <script setup>
@@ -975,14 +1057,46 @@ const markdownMessage = "Here is some Markdown:\n\n### 1. **Foo**\nLorem ipsum d
 </template>
 ```
 
-And here is a minimal decent-looking layout of an actual conversation (Warning: it uses Tailwind CSS!).
+Here is a minimal decent-looking layout of an actual conversation (it uses Tailwind CSS for styling).
 It renders messages in a column layout and styles the chatbot's and user's messages differently.
 
-**TODO:** screenshot.
+It looks like this...
+
+<section class="border border-gray-300 rounded-xl p-8 gap-y-2 flex flex-col"><div class="flex"><div class="-ml-2 flex-none rounded-full w-8 h-8 bg-blue-500"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true" data-slot="icon" class="text-white"><path stroke-linecap="round" stroke-linejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z"></path></svg></div><div class="ml-2"><p class="font-semibold text-blue-800">You</p><div class="prose"><p>How can TMG help monitor injuries during return to play?</p>
+</div></div></div><div class="flex"><div class="-ml-2 flex-none rounded-full w-8 h-8 bg-orange-500"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true" data-slot="icon" class="text-white"><path stroke-linecap="round" stroke-linejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z"></path></svg></div><div class="ml-2"><p class="font-semibold text-orange-700">Assistant</p><div class="prose"><p>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.</p>
+</div></div></div><div class="flex"><div class="-ml-2 flex-none rounded-full w-8 h-8 bg-blue-500"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true" data-slot="icon" class="text-white"><path stroke-linecap="round" stroke-linejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z"></path></svg></div><div class="ml-2"><p class="font-semibold text-blue-800">You</p><div class="prose"><p>How does TMG compare to other diagnostic technologies?</p>
+</div></div></div><div class="flex"><div class="-ml-2 flex-none rounded-full w-8 h-8 bg-orange-500"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true" data-slot="icon" class="text-white"><path stroke-linecap="round" stroke-linejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z"></path></svg></div><div class="ml-2"><p class="font-semibold text-orange-700">Assistant</p><div class="prose"><p>Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.</p>
+</div></div></div></section>
+
+...and the corresponding code looks like this:
 
 ```vue
 <script setup>
 import { ref, } from 'vue'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
+
+// Icons are from Heroicons (`npm install heroicons/vue`)
+import { QuestionMarkCircleIcon, InformationCircleIcon } from '@heroicons/vue/24/outline'
+
+
+// To ensure links to external hosts open in new tabs for better UX. See:
+// - https://github.com/markedjs/marked/pull/1371#issuecomment-434320596
+// - https://github.com/cure53/DOMPurify/issues/317#issuecomment-698800327
+var renderer = new marked.Renderer();
+renderer.link = function(href, title, text) {
+  var link = marked.Renderer.prototype.link.apply(this, arguments);
+  return link.replace("<a","<a target='_blank' rel='noopener noreferrer'");
+};
+marked.setOptions({
+  renderer: renderer
+});
+DOMPurify.addHook('afterSanitizeAttributes', function (node) {
+  if ('target' in node) {
+    node.setAttribute('target', '_blank');
+    node.setAttribute('rel', 'noopener');
+  }
+});
 
 // Conversation contains objects of the form
 // { role: 'user', 'content': "Here is my question..." }
@@ -1024,11 +1138,14 @@ const conversation = ref([])
 </template>
 ```
 
-That's it, basically, as far as the plumbing and technical parts go.
+## That's mostly it
 
-The rest is frontend styling and customization, which will surely vary from case to case.
+That more or less covers that plumbing/infrastructure/technical parts I used to create a simple, but real-life-in-production-customer-facing working chatbot.
+Obviously creating a usable application involves frontend styling and design beyond the scope of this article, and which will obviously vary on a case-by-case basis based on design preferences (although a few universally-applicable bonus features are discussed below).
 
-## Extras
+## Frontend bonus features
+
+Here are some bonus features for a better user experience:
 
 ### New chat
 
@@ -1108,19 +1225,3 @@ const {
   required
 />
 ```
-
-## Extras
-
-### Measurement videos
-
-Chatbot is trained to respond to queries about the measurement process with a link to demo video page.
-
-Videos processed and published [at a dedicated page](https://chat.tmg-bodyevolution.com/videos), where visitor can browse by muscle group.
-
-[Example video](https://www.youtube.com/watch?v=0zXi15-FL7E)
-
-### Publications
-
-Chatbot is trained to respond to queries about the academic articles with a link to a publications page.
-
-Academic articles processed and published [at a dedicated page](https://chat.tmg-bodyevolution.com/publications), where visitors can browse and search by keywords and authors.
